@@ -15,7 +15,7 @@ struct AppState {
     search_query: String,
     notes_dir: PathBuf,
     editing_title: Option<usize>,
-    editing_title_buffer: String,  // <-- Add this for rename input buffer
+    editing_title_buffer: String,
     dark_mode: bool,
 }
 
@@ -94,6 +94,7 @@ impl AppState {
             if fs::rename(&note.path, &new_path).is_ok() {
                 note.title = safe_title;
                 note.path = new_path;
+                self.notes.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
             }
         }
     }
@@ -165,7 +166,7 @@ impl eframe::App for AppState {
                             if ui.selectable_label(selected, &note.title).clicked() {
                                 self.current_tab = Some(tab_idx);
                             }
-                            if ui.button("✕").on_hover_text("Close tab").clicked() {
+                            if ui.button("❌").on_hover_text("Close tab").clicked() {
                                 tab_to_close = Some(tab_idx);
                             }
                         });
@@ -181,49 +182,43 @@ impl eframe::App for AppState {
 
                 ui.separator();
 
-                let mut rename_request: Option<String> = None;
-
                 if let Some(idx) = self.current_tab {
-                    // Extract mutable note outside closures to avoid double borrow
-                    let note = self.notes.get_mut(idx).unwrap();
+                    // Clone title outside borrow
+                    let title = self.notes[idx].title.clone();
 
                     if self.editing_title == Some(idx) {
+                        let mut new_title = self.editing_title_buffer.clone();
                         ui.horizontal(|ui| {
-                            ui.text_edit_singleline(&mut self.editing_title_buffer);
+                            let title_edit = ui.text_edit_singleline(&mut new_title);
 
-                            if ui.button("✔").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                                rename_request = Some(self.editing_title_buffer.clone());
+                            let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                            let ok_clicked = ui.button("OK").clicked();
+
+                            if title_edit.lost_focus() || enter_pressed || ok_clicked {
+                                self.rename_note(idx, &new_title);
                                 self.editing_title = None;
-                                self.editing_title_buffer.clear();
-                            }
-                            if ui.button("✖").clicked() {
-                                self.editing_title = None;
-                                self.editing_title_buffer.clear();
+                            } else {
+                                self.editing_title_buffer = new_title;
                             }
                         });
                     } else {
                         ui.horizontal(|ui| {
-                            ui.heading(&note.title);
-                            if ui.button("✎ Rename").clicked() {
+                            ui.heading(&title);
+                            if ui.button("✏️ Rename").clicked() {
                                 self.editing_title = Some(idx);
-                                self.editing_title_buffer = note.title.clone();
+                                self.editing_title_buffer = title;
                             }
                         });
                     }
 
+                    // Mutable borrow after rename UI
+                    let note = &mut self.notes[idx];
                     let response = ui.add_sized(ui.available_size(), TextEdit::multiline(&mut note.content));
                     if response.changed() {
                         let _ = fs::write(&note.path, &note.content);
                     }
                 } else {
                     ui.label("No note open. Create a new note or open an existing one.");
-                }
-
-                // Apply rename after UI borrows are done
-                if let Some(new_title) = rename_request {
-                    if let Some(idx) = self.current_tab {
-                        self.rename_note(idx, &new_title);
-                    }
                 }
             });
         });
