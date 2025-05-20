@@ -1,6 +1,6 @@
-use eframe::egui::{CentralPanel, Context, Layout, SidePanel, TextEdit, TopBottomPanel, Visuals};
+use eframe::egui::{self, CentralPanel, Context, Layout, SidePanel, TextEdit, TopBottomPanel, Visuals};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 struct Note {
     title: String,
@@ -15,6 +15,7 @@ struct AppState {
     search_query: String,
     notes_dir: PathBuf,
     editing_title: Option<usize>,
+    editing_title_buffer: String,  // <-- Add this for rename input buffer
     dark_mode: bool,
 }
 
@@ -43,6 +44,7 @@ impl Default for AppState {
             search_query: String::new(),
             notes_dir,
             editing_title: None,
+            editing_title_buffer: String::new(),
             dark_mode: true,
         }
     }
@@ -179,52 +181,49 @@ impl eframe::App for AppState {
 
                 ui.separator();
 
+                let mut rename_request: Option<String> = None;
+
                 if let Some(idx) = self.current_tab {
-                    // clone title to avoid mutable borrow conflicts
-                    let current_title = self.notes[idx].title.clone();
+                    // Extract mutable note outside closures to avoid double borrow
+                    let note = self.notes.get_mut(idx).unwrap();
 
                     if self.editing_title == Some(idx) {
-                        let mut new_title = current_title.clone();
-                        let mut rename = false;
-
                         ui.horizontal(|ui| {
-                            if ui.text_edit_singleline(&mut new_title).lost_focus() {
-                                rename = true;
+                            ui.text_edit_singleline(&mut self.editing_title_buffer);
+
+                            if ui.button("✔").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                rename_request = Some(self.editing_title_buffer.clone());
+                                self.editing_title = None;
+                                self.editing_title_buffer.clear();
                             }
-                            if ui.button("✔").clicked() {
-                                rename = true;
+                            if ui.button("✖").clicked() {
+                                self.editing_title = None;
+                                self.editing_title_buffer.clear();
                             }
                         });
-
-                        if rename {
-                            self.rename_note(idx, &new_title);
-                            self.editing_title = None;
-                        }
-
-                        // Now borrow note mutably for content editing
-                        if let Some(note) = self.notes.get_mut(idx) {
-                            let response = ui.add_sized(ui.available_size(), TextEdit::multiline(&mut note.content));
-                            if response.changed() {
-                                let _ = fs::write(&note.path, &note.content);
-                            }
-                        }
                     } else {
                         ui.horizontal(|ui| {
-                            ui.heading(&current_title);
+                            ui.heading(&note.title);
                             if ui.button("✎ Rename").clicked() {
                                 self.editing_title = Some(idx);
+                                self.editing_title_buffer = note.title.clone();
                             }
                         });
+                    }
 
-                        if let Some(note) = self.notes.get_mut(idx) {
-                            let response = ui.add_sized(ui.available_size(), TextEdit::multiline(&mut note.content));
-                            if response.changed() {
-                                let _ = fs::write(&note.path, &note.content);
-                            }
-                        }
+                    let response = ui.add_sized(ui.available_size(), TextEdit::multiline(&mut note.content));
+                    if response.changed() {
+                        let _ = fs::write(&note.path, &note.content);
                     }
                 } else {
                     ui.label("No note open. Create a new note or open an existing one.");
+                }
+
+                // Apply rename after UI borrows are done
+                if let Some(new_title) = rename_request {
+                    if let Some(idx) = self.current_tab {
+                        self.rename_note(idx, &new_title);
+                    }
                 }
             });
         });
