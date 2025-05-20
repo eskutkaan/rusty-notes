@@ -1,4 +1,4 @@
-use eframe::egui::{CentralPanel, Context, TextEdit, TopBottomPanel, SidePanel, Layout};
+use eframe::egui::{CentralPanel, Context, Layout, SidePanel, TextEdit, TopBottomPanel, Visuals};
 use std::fs;
 use std::path::PathBuf;
 
@@ -14,54 +14,110 @@ struct AppState {
     current_tab: Option<usize>,
     search_query: String,
     notes_dir: PathBuf,
+    editing_title: Option<usize>,
+    dark_mode: bool,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         let notes_dir = std::env::current_dir().unwrap().join("notes");
-        fs::create_dir_all(&notes_dir).unwrap();
+        let _ = fs::create_dir_all(&notes_dir);
         let mut notes = vec![];
-        for entry in fs::read_dir(&notes_dir).unwrap() {
-            let entry = entry.unwrap();
-            let path = entry.path();
-            if path.extension().map_or(false, |e| e == "md") {
-                let content = fs::read_to_string(&path).unwrap_or_default();
-                let title = path.file_stem().unwrap().to_string_lossy().into_owned();
-                notes.push(Note { title, content, path });
+
+        if let Ok(entries) = fs::read_dir(&notes_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map_or(false, |e| e == "md") {
+                    let content = fs::read_to_string(&path).unwrap_or_default();
+                    let title = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+                    notes.push(Note { title, content, path });
+                }
             }
         }
+        notes.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+
         Self {
             notes,
             open_tabs: vec![],
             current_tab: None,
             search_query: String::new(),
             notes_dir,
+            editing_title: None,
+            dark_mode: true,
+        }
+    }
+}
+
+impl AppState {
+    fn create_note(&mut self) {
+        let title = format!("Note_{}.md", self.notes.len() + 1);
+        let safe_title = title.replace(|c: char| !c.is_alphanumeric(), "_");
+        let path = self.notes_dir.join(&safe_title);
+        if fs::write(&path, "").is_ok() {
+            let note = Note {
+                title: safe_title.trim_end_matches(".md").to_string(),
+                content: String::new(),
+                path,
+            };
+            self.notes.push(note);
+            self.notes.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+        }
+    }
+
+    fn delete_note(&mut self, i: usize) {
+        let _ = fs::remove_file(&self.notes[i].path);
+        self.notes.remove(i);
+        self.open_tabs.retain(|&x| x != i);
+        for tab in self.open_tabs.iter_mut() {
+            if *tab > i {
+                *tab -= 1;
+            }
+        }
+        if let Some(current) = self.current_tab {
+            if current == i {
+                self.current_tab = self.open_tabs.last().copied();
+            } else if current > i {
+                self.current_tab = Some(current - 1);
+            }
+        }
+        if self.notes.is_empty() {
+            self.current_tab = None;
+        }
+    }
+
+    fn rename_note(&mut self, idx: usize, new_title: &str) {
+        if let Some(note) = self.notes.get_mut(idx) {
+            let safe_title = new_title.replace(|c: char| !c.is_alphanumeric(), "_");
+            let new_path = self.notes_dir.join(format!("{}.md", safe_title));
+            if fs::rename(&note.path, &new_path).is_ok() {
+                note.title = safe_title;
+                note.path = new_path;
+            }
         }
     }
 }
 
 impl eframe::App for AppState {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        // Top panel with new‑note button and search bar
+        // Apply theme
+        ctx.set_visuals(if self.dark_mode {
+            Visuals::dark()
+        } else {
+            Visuals::light()
+        });
+
         TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("+ New Note").clicked() {
-                    let title = format!("Note_{}.md", self.notes.len() + 1);
-                    let path = self.notes_dir.join(&title);
-                    fs::write(&path, "").unwrap();
-                    let note = Note {
-                        title: title.trim_end_matches(".md").to_string(),
-                        content: String::new(),
-                        path,
-                    };
-                    self.notes.push(note);
+                    self.create_note();
                 }
-
                 ui.text_edit_singleline(&mut self.search_query);
+                if ui.button(if self.dark_mode { "🌞 Light" } else { "🌙 Dark" }).clicked() {
+                    self.dark_mode = !self.dark_mode;
+                }
             });
         });
 
-        // Resizable left sidebar (width not persisted)
         SidePanel::left("side_panel")
             .resizable(true)
             .default_width(180.0)
@@ -78,54 +134,45 @@ impl eframe::App for AppState {
                     }
 
                     ui.horizontal(|ui| {
-                        if ui.button(&note.title).clicked() {
+                        if ui.button(&note.title).on_hover_text("Open note").clicked() {
                             if !self.open_tabs.contains(&i) {
                                 self.open_tabs.push(i);
                             }
                             self.current_tab = Some(i);
                         }
-                        if ui.button("🗑").clicked() {
+                        if ui.button("🗑").on_hover_text("Delete note").clicked() {
                             note_to_remove = Some(i);
                         }
                     });
                 }
 
                 if let Some(i) = note_to_remove {
-                    let _ = fs::remove_file(&self.notes[i].path);
-                    self.notes.remove(i);
-
-                    // Remove the deleted note from open_tabs and adjust other indices
-                    self.open_tabs.retain(|&x| x != i);
-                    for tab in self.open_tabs.iter_mut() {
-                        if *tab > i {
-                            *tab -= 1;
-                        }
-                    }
-
-                    // Fix current_tab after removal
-                    if let Some(current) = self.current_tab {
-                        if current == i {
-                            self.current_tab = self.open_tabs.last().copied();
-                        } else if current > i {
-                            self.current_tab = Some(current - 1);
-                        }
-                    }
-
-                    if self.notes.is_empty() {
-                        self.current_tab = None;
-                    }
+                    self.delete_note(i);
                 }
             });
 
-        // Central panel with tab bar and full-area editor
         CentralPanel::default().show(ctx, |ui| {
             ui.with_layout(Layout::top_down(eframe::egui::Align::Min), |ui| {
                 ui.horizontal_wrapped(|ui| {
+                    let mut tab_to_close: Option<usize> = None;
                     for &tab_idx in &self.open_tabs {
                         let note = &self.notes[tab_idx];
                         let selected = self.current_tab == Some(tab_idx);
-                        if ui.selectable_label(selected, &note.title).clicked() {
-                            self.current_tab = Some(tab_idx);
+
+                        ui.horizontal(|ui| {
+                            if ui.selectable_label(selected, &note.title).clicked() {
+                                self.current_tab = Some(tab_idx);
+                            }
+                            if ui.button("✕").on_hover_text("Close tab").clicked() {
+                                tab_to_close = Some(tab_idx);
+                            }
+                        });
+                    }
+
+                    if let Some(idx) = tab_to_close {
+                        self.open_tabs.retain(|&x| x != idx);
+                        if self.current_tab == Some(idx) {
+                            self.current_tab = self.open_tabs.last().copied();
                         }
                     }
                 });
@@ -133,10 +180,47 @@ impl eframe::App for AppState {
                 ui.separator();
 
                 if let Some(idx) = self.current_tab {
-                    if let Some(note) = self.notes.get_mut(idx) {
-                        let response = ui.add_sized(ui.available_size(), TextEdit::multiline(&mut note.content));
-                        if response.changed() {
-                            let _ = fs::write(&note.path, &note.content);
+                    // clone title to avoid mutable borrow conflicts
+                    let current_title = self.notes[idx].title.clone();
+
+                    if self.editing_title == Some(idx) {
+                        let mut new_title = current_title.clone();
+                        let mut rename = false;
+
+                        ui.horizontal(|ui| {
+                            if ui.text_edit_singleline(&mut new_title).lost_focus() {
+                                rename = true;
+                            }
+                            if ui.button("✔").clicked() {
+                                rename = true;
+                            }
+                        });
+
+                        if rename {
+                            self.rename_note(idx, &new_title);
+                            self.editing_title = None;
+                        }
+
+                        // Now borrow note mutably for content editing
+                        if let Some(note) = self.notes.get_mut(idx) {
+                            let response = ui.add_sized(ui.available_size(), TextEdit::multiline(&mut note.content));
+                            if response.changed() {
+                                let _ = fs::write(&note.path, &note.content);
+                            }
+                        }
+                    } else {
+                        ui.horizontal(|ui| {
+                            ui.heading(&current_title);
+                            if ui.button("✎ Rename").clicked() {
+                                self.editing_title = Some(idx);
+                            }
+                        });
+
+                        if let Some(note) = self.notes.get_mut(idx) {
+                            let response = ui.add_sized(ui.available_size(), TextEdit::multiline(&mut note.content));
+                            if response.changed() {
+                                let _ = fs::write(&note.path, &note.content);
+                            }
                         }
                     }
                 } else {
@@ -155,3 +239,4 @@ fn main() -> eframe::Result<()> {
         Box::new(|_cc| Box::new(AppState::default())),
     )
 }
+
