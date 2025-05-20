@@ -1,6 +1,5 @@
 use eframe::egui::{self, CentralPanel, Context, Key, Layout, RichText, 
     ScrollArea, SidePanel, TextEdit, TextStyle, TopBottomPanel, Visuals};
-use std::ops::Sub;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -101,7 +100,7 @@ impl AppState {
                 last_saved: Instant::now(),
             };
             self.notes.push(note);
-            let idx = self.notes.len() - 1;
+            let _idx = self.notes.len() - 1;
             self.notes.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
             
             // Find the index after sorting
@@ -205,7 +204,7 @@ impl AppState {
     
     fn autosave_notes(&mut self) {
         let now = Instant::now();
-        for (i, note) in self.notes.iter_mut().enumerate() {
+        for (_i, note) in self.notes.iter_mut().enumerate() {
             if note.unsaved_changes && now.duration_since(note.last_saved) >= self.autosave_interval {
                 if fs::write(&note.path, &note.content).is_ok() {
                     note.unsaved_changes = false;
@@ -294,7 +293,7 @@ impl eframe::App for AppState {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         // Process keyboard shortcuts
         let ctrl = ctx.input(|i| i.modifiers.ctrl);
-        let shift = ctx.input(|i| i.modifiers.shift);
+        let _shift = ctx.input(|i| i.modifiers.shift);
         
         // Keyboard shortcuts
         if ctrl {
@@ -378,7 +377,7 @@ impl eframe::App for AppState {
                 }
                 
                 ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
-                    if let Some(idx) = self.current_tab {
+                    if let Some(_idx) = self.current_tab {
                         if ui.button(if self.show_preview { "✏️ Edit" } else { "👁️ Preview" })
                             .on_hover_text("Toggle Preview (Ctrl+P)")
                             .clicked() 
@@ -514,7 +513,7 @@ impl eframe::App for AppState {
                         // Title editing mode
                         let mut new_title = self.editing_title_buffer.clone();
                         ui.horizontal(|ui| {
-                            let title_edit = ui.text_edit_singleline(&mut new_title);
+                            let _title_edit = ui.text_edit_singleline(&mut new_title);
                             self.editing_title_buffer = new_title.clone();  // Update the buffer with changes
 
                             let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
